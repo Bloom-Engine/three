@@ -1,0 +1,31 @@
+{
+  "name": "@bloomengine/three",
+  "version": "0.1.0",
+  "description": "Run three.js games natively on Bloom, unchanged: the real three.js with a Bloom renderer, compiled by Perry",
+  "type": "module",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/Bloom-Engine/three.git" },
+  "homepage": "https://github.com/Bloom-Engine/three#readme",
+  "keywords": ["bloom", "perry", "three", "threejs", "native", "game"],
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "bin": { "bloom-three": "bin/bloom-three.mjs" },
+  "exports": {
+    ".": "./src/index.ts",
+    "./config": "./src/config.ts",
+    "./three": "./src/three.ts",
+    "./gltf-loader": "./src/gltf-loader.ts"
+  },
+  "files": ["src/", "bin/", "README.md", "LICENSE"],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@bloomengine/engine": ">=0.4.16",
+    "@bloomengine/web": ">=0.1.0",
+    "three": ">=0.160.0"
+  },
+  "perry": {
+    "allow": { "nativeLibrary": ["@bloomengine/*"] }
+  }
+}

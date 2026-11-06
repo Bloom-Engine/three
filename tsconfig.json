@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@bloomengine/three/real/three": ["./node_modules/@types/three/src/Three.d.ts"],
+      "@bloomengine/three/real/GLTFLoader": ["./node_modules/@types/three/examples/jsm/loaders/GLTFLoader.d.ts"]
+    }
+  },
+  "include": ["src"]
+}
