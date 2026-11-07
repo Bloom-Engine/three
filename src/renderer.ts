@@ -22,23 +22,46 @@
 import * as THREE from "@bloomengine/three/real/three";
 import { beginMode3D, endMode3D, clearBackground } from "@bloomengine/engine";
 import {
-  loadModel, loadModelAnimation, instantiateAnimation, updateModelAnimation, drawModel,
+  loadModel, unloadModel, loadModelAnimation, instantiateAnimation, updateModelAnimation, drawModel,
   setAmbientLight, setDirectionalLight, setProceduralSky,
 } from "@bloomengine/engine/models";
 import type { Model } from "@bloomengine/engine/core";
 import {
   createSceneNode, updateSceneNodeGeometry, setSceneNodeTransform, setSceneNodeVisible,
   setSceneNodeMaterial, setSceneNodeMaterialTextureHandles, setSceneNodeCastShadow, setSceneNodeReceiveShadow,
-  enableShadows, disableShadows,
+  enableShadows, disableShadows, destroySceneNode,
 } from "@bloomengine/engine/scene";
-import { createTextureRgba8, loadTexture, genTextureMipmaps } from "@bloomengine/engine/textures";
+import { createTextureRgba8, loadTexture, genTextureMipmaps, unloadTexture } from "@bloomengine/engine/textures";
 import { setCameraClipPlanes } from "@bloomengine/engine/core";
 import { setFrameCallback, screenSize, cssSize, extraTimings, setViewCanvas, document } from "@bloomengine/web";
 import { mixerOf } from "./mixers.ts";
 import { threeConfig } from "./config.ts";
 
-interface NodeState { handle: number; material: string; geometry: string; visible: boolean; seen: number }
-interface SkinnedState { model: Model; anim: number }
+interface NodeState { handle: number; material: string; geometry: string; visible: boolean; seen: number; texture: number }
+interface SkinnedState { model: Model; anim: number; url: string; seen: number }
+
+/**
+ * What isn't drawn for this many frames is let go: a mesh's scene node (its geometry on the GPU),
+ * then the textures and models nobody draws any more. A game that switches its whole scene (a new
+ * level, another theme) gets its memory back; one that hides something briefly doesn't re-upload it.
+ */
+const KEEP_FRAMES = 240;
+const NO_GC = process.env["BLOOM_NO_GC"] !== undefined;
+
+/** How many scene nodes use each texture this renderer loaded, and how to forget it when none do. */
+const textureUsers = new Map<number, number>();
+const textureCache = new Map<number, () => void>();
+function retainTexture(handle: number): void { if (textureCache.has(handle)) textureUsers.set(handle, (textureUsers.get(handle) ?? 0) + 1); }
+function releaseTexture(handle: number): void {
+  const forget = textureCache.get(handle);
+  if (forget === undefined) return;
+  const n = (textureUsers.get(handle) ?? 0) - 1;
+  if (n > 0) { textureUsers.set(handle, n); return; }
+  textureUsers.delete(handle);
+  textureCache.delete(handle);
+  forget();
+  unloadTexture({ handle, width: 0, height: 0 });
+}
 
 const models = new Map<string, Model>();
 const anims = new Map<string, number>();
@@ -160,11 +183,33 @@ export class BloomRenderer {
     for (const state of this.nodes.values()) {
       if (state.seen !== this.frame && state.visible) { setSceneNodeVisible(state.handle, false); state.visible = false; }
     }
+    if (this.frame % 60 === 0 && !NO_GC) this.collect();
     endMode3D();
     extraTimings["matrices"] = (extraTimings["matrices"] ?? 0) + t1 - t0;
     extraTimings["lights"] = (extraTimings["lights"] ?? 0) + t2 - t1;
     extraTimings["scene"] = (extraTimings["scene"] ?? 0) + Date.now() - t2;
     this.info.render.frame = this.frame;
+  }
+
+  /** Let go of what hasn't been drawn for KEEP_FRAMES frames (see KEEP_FRAMES). */
+  private collect(): void {
+    const old = this.frame - KEEP_FRAMES;
+    for (const [mesh, state] of this.nodes) {
+      if (state.seen >= old) continue;
+      destroySceneNode(state.handle);
+      releaseTexture(state.texture);
+      this.nodes.delete(mesh);
+    }
+    const used = new Set<string>();
+    for (const [root, state] of this.skinned) {
+      if (state.seen < old) this.skinned.delete(root); else used.add(state.url);
+    }
+    for (const [url, model] of models) {
+      if (used.has(url)) continue;
+      unloadModel(model);
+      models.delete(url);
+      anims.delete(url);
+    }
   }
 
   private camera(camera: THREE.Camera): void {
@@ -239,7 +284,7 @@ export class BloomRenderer {
       const handle = createSceneNode();
       setSceneNodeCastShadow(handle, mesh.castShadow);
       setSceneNodeReceiveShadow(handle, mesh.receiveShadow);
-      state = { handle, material: "", geometry: "?", visible: true, seen: 0 };
+      state = { handle, material: "", geometry: "?", visible: true, seen: 0, texture: 0 };
       this.nodes.set(mesh, state);
     }
     state.seen = this.frame;
@@ -276,7 +321,9 @@ export class BloomRenderer {
       });
     }
     // 0 clears it: a texture taken away
-    setSceneNodeMaterialTextureHandles(state.handle, { baseColor: map === null ? 0 : uploadTexture(map) });
+    const texture = map === null ? 0 : uploadTexture(map);
+    if (texture !== state.texture) { retainTexture(texture); releaseTexture(state.texture); state.texture = texture; }
+    setSceneNodeMaterialTextureHandles(state.handle, { baseColor: texture });
   }
 
   // ------------------------------------------------------------ skinned models
@@ -289,9 +336,10 @@ export class BloomRenderer {
       if (model === undefined) { model = loadModel(url); models.set(url, model); }
       let source = anims.get(url);
       if (source === undefined) { source = loadModelAnimation(url); anims.set(url, source); }
-      state = { model, anim: instantiateAnimation(source) };
+      state = { model, anim: instantiateAnimation(source), url, seen: 0 };
       this.skinned.set(root, state);
     }
+    state.seen = this.frame;
     // the clip with the most weight in the root's three.js mixer, at its current time
     const clips = (root.userData.__clips ?? []) as string[];
     let clip = -1, time = 0, best = 0;
@@ -361,6 +409,8 @@ function uploadTexture(texture: THREE.Texture): number {
       if (texture.generateMipmaps !== false) genTextureMipmaps(t);
       handle = t.handle;
       files.set(image.file, handle);
+      const file = image.file;
+      textureCache.set(handle, () => { files.delete(file); });
     }
     return handle;
   }
@@ -375,6 +425,7 @@ function uploadTexture(texture: THREE.Texture): number {
   else { warnOnce("a data texture that isn't RGBA isn't drawn"); return 0; }
   const handle = createTextureRgba8(rgba, w, h).handle;
   textures.set(key, handle);
+  textureCache.set(handle, () => { textures.delete(key); });
   return handle;
 }
 
