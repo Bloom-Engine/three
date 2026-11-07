@@ -21,7 +21,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@bloomengine/engine": ">=0.4.16",
+    "@bloomengine/engine": ">=0.4.17",
     "@bloomengine/web": ">=0.1.0",
     "three": ">=0.160.0"
   },
