@@ -1,6 +1,6 @@
 {
   "name": "@bloomengine/three",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Run three.js games natively on Bloom, unchanged: the real three.js with a Bloom renderer, compiled by Perry",
   "type": "module",
   "license": "MIT",
